@@ -26,6 +26,8 @@ defmodule Astarte.Core.Generators.Device do
   use ExUnitProperties
   alias Astarte.Common.Generators.Ip, as: IpGenerator
   alias Astarte.Common.Generators.Timestamp, as: TimestampGenerator
+  alias Astarte.Core.Generators.Interface, as: InterfaceGenerator
+  alias Astarte.Core.Generators.Group, as: GroupGenerator
   alias Astarte.Core.Device
   alias Astarte.Core.Interface
 
@@ -34,7 +36,9 @@ defmodule Astarte.Core.Generators.Device do
   TODO: using `ecto_strea_factory` in the future
   """
   @spec device(interfaces: [Interface.t()]) :: StreamData.t(map())
-  def device(interfaces: interfaces) do
+  def device(opts) do
+    interfaces = Keyword.get(opts, :interfaces, [])
+
     gen all id <- id(),
             last_seen_ip <- IpGenerator.ip(:ipv4),
             last_credentials_request_ip <- IpGenerator.ip(:ipv4),
@@ -55,12 +59,22 @@ defmodule Astarte.Core.Generators.Device do
               |> interfaces_data()
               |> constant(),
             aliases <- aliases(),
-            attributes <- attributes() do
+            attributes <- attributes(),
+            groups <- groups(),
+            cert_aki <- string(:ascii),
+            cert_serial <- string(:ascii),
+            credentials_secret <- string(:ascii),
+            pending_empty_cache <- boolean(),
+            protocol_revision <- constant(0),
+            old_introspection <- old_introspection() do
       %{
         id: id,
         device_id: id,
         encoded_id: Device.encode_device_id(id),
         connected: last_connection >= last_disconnection,
+        cert_aki: cert_aki,
+        cert_serial: cert_serial,
+        credentials_secret: credentials_secret,
         first_registration: first_registration,
         first_credentials_request: first_credentials_request,
         last_connection: last_connection,
@@ -68,12 +82,18 @@ defmodule Astarte.Core.Generators.Device do
         last_seen_ip: last_seen_ip,
         inhibit_credentials_request: inhibit_credentials_request,
         last_credentials_request_ip: last_credentials_request_ip,
-        interfaces_msgs: interfaces_msgs,
-        interfaces_bytes: interfaces_bytes,
+        exchanged_msgs_by_interface: interfaces_msgs,
+        exchanged_bytes_by_interface: interfaces_bytes,
         aliases: aliases,
         attributes: attributes,
+        groups: groups,
         total_received_msgs: total_received_msgs,
-        total_received_bytes: total_received_bytes
+        total_received_bytes: total_received_bytes,
+        introspection: introspection(interfaces),
+        introspection_minor: introspection_minor(interfaces),
+        old_introspection: old_introspection,
+        pending_empty_cache: pending_empty_cache,
+        protocol_revision: protocol_revision
       }
     end
   end
@@ -143,6 +163,50 @@ defmodule Astarte.Core.Generators.Device do
       map_of(
         string(:alphanumeric, min_length: 1),
         string(:alphanumeric, min_length: 1)
+      ),
+      constant(nil)
+    ]
+    |> one_of()
+  end
+
+  defp groups do
+    [
+      map_of(
+        GroupGenerator.name(),
+        repeatedly(&group_uuid/0)
+      ),
+      constant(nil)
+    ]
+    |> one_of()
+  end
+
+  defp group_uuid do
+    {uuid, _} =
+      self()
+      |> :uuid.new()
+      |> :uuid.get_v1()
+
+    uuid
+  end
+
+  defp introspection(interfaces) do
+    Map.new(interfaces, fn %Interface{name: name, major_version: major_version} ->
+      {name, major_version}
+    end)
+  end
+
+  defp introspection_minor(interfaces) do
+    Map.new(interfaces, fn %Interface{name: name, minor_version: minor_version} ->
+      {name, minor_version}
+    end)
+  end
+
+  defp old_introspection do
+    [
+      map_of(
+        tuple({InterfaceGenerator.name(), non_negative_integer()}),
+        # TODO: This doesn't cover 0 minor versions, e.g. v1.0
+        positive_integer()
       ),
       constant(nil)
     ]
