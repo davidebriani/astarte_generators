@@ -24,10 +24,10 @@ defmodule Astarte.Core.Generators.Interface do
   """
   use ExUnitProperties
 
+  alias Astarte.Core.CQLUtils
   alias Astarte.Core.Generators.Mapping, as: MappingGenerator
   alias Astarte.Core.Interface
   alias Astarte.Generators.Utilities.ParamsGen
-  alias Ecto.UUID
 
   import ParamsGen
 
@@ -44,13 +44,19 @@ defmodule Astarte.Core.Generators.Interface do
     end
   end
 
-  defp id, do: repeatedly(&UUID.bingenerate/0)
+  def interface_id(interface_name, interface_major) do
+    constant(CQLUtils.interface_id(interface_name, interface_major))
+  end
 
   def name do
     gen all optional_part <- name_optional(),
             required_part <- name_required(optional_part) do
       optional_part <> required_part
     end
+  end
+
+  def major_version do
+    integer(0..9)
   end
 
   defp minor_version(major_version) do
@@ -111,9 +117,9 @@ defmodule Astarte.Core.Generators.Interface do
   end
 
   defp required_fields(params) do
-    params gen all id <- id(),
-                   name <- name(),
-                   major_version <- integer(0..9),
+    params gen all name <- name(),
+                   major_version <- major_version(),
+                   interface_id <- interface_id(name, major_version),
                    minor_version <- minor_version(major_version),
                    type <- type(),
                    aggregation <- aggregation(%{type: type}),
@@ -132,12 +138,15 @@ defmodule Astarte.Core.Generators.Interface do
                        reliability: reliability,
                        expiry: expiry,
                        allow_unset: allow_unset,
-                       explicit_timestamp: explicit_timestamp
+                       explicit_timestamp: explicit_timestamp,
+                       interface_id: interface_id,
+                       interface_name: name,
+                       interface_major: major_version
                      }),
                    params: params do
       %{
-        id: id,
-        interface_id: id,
+        id: interface_id,
+        interface_id: interface_id,
         name: name,
         interface_name: name,
         major_version: major_version,
