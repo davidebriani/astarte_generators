@@ -24,6 +24,8 @@ defmodule Astarte.Core.Generators.Mapping do
   """
   use ExUnitProperties
 
+  alias Astarte.Core.CQLUtils
+  alias Astarte.Core.Generators.Interface, as: InterfaceGenerator
   alias Astarte.Core.Mapping
 
   @doc """
@@ -39,7 +41,8 @@ defmodule Astarte.Core.Generators.Mapping do
             :explicit_timestamp => boolean(),
             :prefix => String.t(),
             :reliability => :unreliable | :guaranteed | :unique,
-            optional(:retention) => :discard | :volatile | :stored
+            optional(:retention) => :discard | :volatile | :stored,
+            optional(:interface_id) => :uuid
           }
         ) :: StreamData.t(Mapping.t())
   def mapping(interface_type \\ :datastream, config) do
@@ -54,14 +57,17 @@ defmodule Astarte.Core.Generators.Mapping do
   end
 
   defp endpoint(aggregation, prefix) do
-    generator =
-      case aggregation do
-        :individual -> repeatedly(fn -> "/individual_#{System.unique_integer([:positive])}" end)
-        :object -> repeatedly(fn -> "/object_#{System.unique_integer([:positive])}" end)
-      end
+    repeatedly(fn -> endpoint_string(aggregation, prefix) end)
+  end
 
-    gen all(postfix <- generator) do
-      prefix <> postfix
+  defp endpoint_string(aggregation, prefix) do
+    prefix <> endpoint_postfix(aggregation)
+  end
+
+  defp endpoint_postfix(aggregation) do
+    case aggregation do
+      :individual -> "/individual_#{System.unique_integer([:positive])}"
+      :object -> "/object_#{System.unique_integer([:positive])}"
     end
   end
 
@@ -109,24 +115,53 @@ defmodule Astarte.Core.Generators.Mapping do
 
   defp doc, do: string(:ascii, min_length: 1, max_length: 100_000)
 
-  defp required_fields(%{
-         aggregation: aggregation,
-         prefix: prefix,
-         retention: retention,
-         reliability: reliability,
-         explicit_timestamp: explicit_timestamp,
-         allow_unset: allow_unset,
-         expiry: expiry
-       }) do
-    fixed_map(%{
-      endpoint: endpoint(aggregation, prefix),
-      value_type: type(),
-      retention: constant(retention),
-      reliability: constant(reliability),
-      explicit_timestamp: constant(explicit_timestamp),
-      allow_unset: constant(allow_unset),
-      expiry: constant(expiry)
-    })
+  defp required_fields(
+         %{
+           aggregation: aggregation,
+           prefix: prefix,
+           retention: retention,
+           reliability: reliability,
+           explicit_timestamp: explicit_timestamp,
+           allow_unset: allow_unset,
+           expiry: expiry
+         } = config
+       ) do
+    interface_name =
+      config[:interface_name] || "test.interface#{System.unique_integer([:positive])}"
+
+    interface_major = config[:interface_major] || Enum.random(0..255)
+
+    interface_id_generator =
+      if Map.has_key?(config, :interface_id) do
+        constant(config.interface_id)
+      else
+        InterfaceGenerator.interface_id(interface_name, interface_major)
+      end
+
+    gen all(
+          interface_id <- interface_id_generator,
+          endpoint <- endpoint(aggregation, prefix),
+          value_type <- type(),
+          retention <- constant(retention),
+          reliability <- constant(reliability),
+          explicit_timestamp <- constant(explicit_timestamp),
+          allow_unset <- constant(allow_unset),
+          expiry <- constant(expiry)
+        ) do
+      endpoint_id = CQLUtils.endpoint_id(interface_name, interface_major, endpoint)
+
+      %{
+        interface_id: interface_id,
+        endpoint_id: endpoint_id,
+        endpoint: endpoint,
+        value_type: value_type,
+        retention: retention,
+        reliability: reliability,
+        explicit_timestamp: explicit_timestamp,
+        allow_unset: allow_unset,
+        expiry: expiry
+      }
+    end
   end
 
   defp optional_fields(_config) do
